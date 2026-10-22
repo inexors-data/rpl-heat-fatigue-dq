@@ -87,26 +87,65 @@ def _negative_control(df):
     return _cox(nc)[1]
 
 
+INK, INK_2, MUTED, GRID = "#0b0b0b", "#52514e", "#898781", "#e1e0d9"
+COOL, WARM = "#2a78d6", "#eb6834"  # categorical slots 1-2 of the reference palette
+
+
 def _km_plot(df):
+    """Two panels (age groups), each comparing cool vs warm matches.
+
+    Plotted as the cumulative share already substituted (1 - KM survival) on a 0-based axis:
+    "how many were taken off by minute X" reads more naturally than survival, and a 0 baseline
+    keeps a 3-point gap from looking dramatic.
+    """
     FIG_DIR.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(8, 5))
-    groups = [
-        ("< 30 лет, прохладно", (df.age_years < 30) & (df.temperature_c < WARM_C), "#4c78a8", "-"),
-        ("< 30 лет, ≥ 21°C", (df.age_years < 30) & (df.temperature_c >= WARM_C), "#4c78a8", "--"),
-        ("30+ лет, прохладно", (df.age_years >= 30) & (df.temperature_c < WARM_C), "#e45756", "-"),
-        ("30+ лет, ≥ 21°C", (df.age_years >= 30) & (df.temperature_c >= WARM_C), "#e45756", "--"),
-    ]
-    for label, mask, color, style in groups:
-        sub = df[mask]
-        KaplanMeierFitter().fit(sub.duration_min, sub.event, label=f"{label} (n={len(sub)})").plot_survival_function(
-            ax=ax, ci_show=False, color=color, linestyle=style)
-    ax.set_xlabel("Минута матча")
-    ax.set_ylabel("Доля игроков старта, ещё не заменённых")
-    ax.set_title("Время до замены: возраст × температура (полевые игроки, РПЛ 2023/24–2025/26)")
-    ax.set_xlim(40, 90)
-    ax.grid(alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(FIG_DIR / "km_age_temperature.png", dpi=150)
+    fig, axes = plt.subplots(1, 2, figsize=(11, 5), sharey=True)
+    panels = [("До 30 лет", df.age_years < 30), ("30 лет и старше", df.age_years >= 30)]
+    conditions = [("прохладно, < 21°C", df.temperature_c < WARM_C, COOL, "-"),
+                  ("жара, ≥ 21°C", df.temperature_c >= WARM_C, WARM, "--")]
+    minutes = np.arange(0, 91)
+
+    for ax, (title, age_mask) in zip(axes, panels):
+        ends, sizes = [], []
+        for label, temp_mask, color, style in conditions:
+            sub = df[age_mask & temp_mask]
+            km = KaplanMeierFitter().fit(sub.duration_min, sub.event)
+            share = (1 - km.survival_function_at_times(minutes).to_numpy()) * 100
+            ax.step(minutes, share, where="post", color=color, linestyle=style, linewidth=2)
+            ax.plot([90], [share[-1]], marker="o", markersize=6, color=color, clip_on=False, zorder=3)
+            ends.append([share[-1], share[-1], f"{label}\n{share[-1]:.0f}% заменены", color])
+            sizes.append(f"{len(sub):,}".replace(",", " "))
+        # Direct labels at the line ends; only the text is nudged apart, the dots stay on the data.
+        ends.sort()
+        if ends[1][1] - ends[0][1] < 7:
+            mid = (ends[0][1] + ends[1][1]) / 2
+            ends[0][1], ends[1][1] = mid - 3.5, mid + 3.5
+        for y_data, y_text, text, color in ends:
+            ax.annotate(text, xy=(90, y_data), xytext=(92, y_text), textcoords="data",
+                        va="center", fontsize=9, color=INK_2, annotation_clip=False)
+        ax.axvspan(45, 46, color=GRID, zorder=0)
+        ax.text(45.5, 49, "перерыв", ha="center", va="top", fontsize=8, color=MUTED)
+        ax.set_title(title, loc="left", fontsize=12, color=INK, pad=22)
+        ax.text(0, 1.02, f"выборка: {sizes[0]} выходов в старте в прохладу, {sizes[1]} в жару",
+                transform=ax.transAxes, fontsize=8.5, color=MUTED, va="bottom")
+        ax.set_xlim(0, 90)
+        ax.set_ylim(0, 50)
+        ax.set_xticks([0, 15, 30, 45, 60, 75, 90])
+        ax.set_xlabel("Минута матча", color=INK_2)
+        ax.grid(axis="y", color=GRID, linewidth=0.8)
+        ax.tick_params(colors=MUTED)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color("#c3c2b7")
+    axes[0].set_ylabel("Игроков старта уже заменено, %", color=INK_2)
+    fig.suptitle("В жару игроков меняют чуть чаще — одинаково у молодых и возрастных",
+                 x=0.06, ha="left", fontsize=14, color=INK, fontweight="bold")
+    fig.text(0.06, 0.895, "Полевые игроки стартового состава, РПЛ 2023/24–2025/26. "
+             "Без поправки на месяц: жаркие матчи — в основном июль–август.",
+             ha="left", fontsize=9.5, color=INK_2)
+    fig.subplots_adjust(left=0.06, right=0.86, top=0.76, bottom=0.12, wspace=0.45)
+    fig.savefig(FIG_DIR / "km_age_temperature.png", dpi=150, facecolor="white")
     plt.close(fig)
 
 
