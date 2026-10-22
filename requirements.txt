@@ -1,0 +1,6 @@
+requests>=2.31
+truststore>=0.9
+duckdb>=1.0
+pandas>=2.1
+lifelines>=0.29
+matplotlib>=3.8
